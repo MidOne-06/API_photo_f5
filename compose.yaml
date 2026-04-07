@@ -13,7 +13,7 @@ services:
       PORT: ${PORT:-8056}
       SESSION_FILE: /app/data/session_bot_ft
       STATE_FILE: /app/data/api_state.json
-      PGCLIENTENCODING: ${PGCLIENTENCODING:-LATIN1}
+      PGCLIENTENCODING: ${PGCLIENTENCODING:-UTF8}
       DB_OPTIONS: ${DB_OPTIONS:-}
     ports:
       - "${PORT:-8056}:${PORT:-8056}"

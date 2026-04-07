@@ -120,8 +120,8 @@ DB_CONFIG = {
     "password": get_env_required("DB_PASSWORD"),
 }
 
-# Forzar mensajes y encoding desde el arranque de la sesión para evitar UnicodeDecodeError en errores de conexión.
-client_encoding = os.getenv("PGCLIENTENCODING", "LATIN1")
+# Forzar mensajes en inglés y client_encoding definido (por defecto UTF8).
+client_encoding = os.getenv("PGCLIENTENCODING", "UTF8")
 lc_messages = "C"
 custom_options = os.getenv("DB_OPTIONS", "")
 options_parts = [
