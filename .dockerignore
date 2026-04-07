@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.git
+.gitignore
+api_state.json
+session_bot_ft.session
+session_bot_ft.session-journal
+project/
+data/

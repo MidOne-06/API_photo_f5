@@ -1,0 +1,24 @@
+services:
+  api_reniec_foto_v1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: api-reniec-foto-v1
+    container_name: api-reniec-foto-v1
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-8056}
+      SESSION_FILE: /app/data/session_bot_ft
+      STATE_FILE: /app/data/api_state.json
+    ports:
+      - "${PORT:-8056}:${PORT:-8056}"
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
