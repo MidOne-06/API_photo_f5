@@ -120,6 +120,18 @@ DB_CONFIG = {
     "password": get_env_required("DB_PASSWORD"),
 }
 
+# Forzar mensajes y encoding desde el arranque de la sesión para evitar UnicodeDecodeError en errores de conexión.
+client_encoding = os.getenv("PGCLIENTENCODING", "LATIN1")
+lc_messages = "C"
+custom_options = os.getenv("DB_OPTIONS", "")
+options_parts = [
+    f"-c client_encoding={client_encoding}",
+    f"-c lc_messages={lc_messages}",
+]
+if custom_options.strip():
+    options_parts.append(custom_options.strip())
+DB_CONFIG["options"] = " ".join(options_parts)
+
 POOL_MIN_CONN = int(os.getenv("POOL_MIN_CONN", "2"))
 POOL_MAX_CONN = int(os.getenv("POOL_MAX_CONN", "5"))
 
@@ -1130,19 +1142,28 @@ async def fetch_payload_with_reconnect(
             req_id,
             e,
         )
-        try:
-            await client.disconnect()
-        except Exception:
-            logger.debug("[%s] TG disconnect during retry cleanup failed", req_id)
-
-        await ensure_telegram_connected(client, req_id)
-        return await fetch_payload_from_bot(
-            client,
-            chat,
-            dni,
-            req_id=req_id,
-            metrics=metrics,
+    except Exception as e:
+        # Telethon puede lanzar errores de buffer/clock skew; intentamos un reconnect único
+        logger.warning(
+            "[%s] TG unexpected error during request -> reconnecting once: %s",
+            req_id,
+            e,
         )
+
+    # Reintento único tras cualquier error
+    try:
+        await client.disconnect()
+    except Exception:
+        logger.debug("[%s] TG disconnect during retry cleanup failed", req_id)
+
+    await ensure_telegram_connected(client, req_id)
+    return await fetch_payload_from_bot(
+        client,
+        chat,
+        dni,
+        req_id=req_id,
+        metrics=metrics,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
