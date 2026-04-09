@@ -307,7 +307,7 @@ def load_persistent_state() -> Optional[datetime]:
 
 # --- NO INFO ---
 RE_KAISEN_NOINFO = re.compile(
-    r"\[[^\]]+\].*?no se encontro informaci[oó]n(?:\s*\[[^\]]+\])?",
+    r"(?:\[[^\]]+\].*?)?no se encontro\s+(?:informaci[oó]n|datos)(?:\s+para\s+este\s+dni)?(?:\s*\[[^\]]+\])?",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -379,6 +379,14 @@ class BotInternalError(Exception):
 class BotDniInvalidException(Exception):
     """El grupo respondió que el DNI es inválido."""
     pass
+
+
+class BotDniMismatchException(Exception):
+    """El grupo respondio con payload de otro DNI."""
+
+    def __init__(self, got_dni: Optional[str] = None):
+        super().__init__(got_dni or "")
+        self.got_dni = got_dni
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -918,11 +926,44 @@ async def ensure_telegram_connected(client: TelegramClient, req_id: str):
     logger.info("[%s] TG client reconnected", req_id)
 
 
+def _normalize_dni_digits(value: str) -> Optional[str]:
+    digits = re.sub(r"\D", "", value or "")
+    if not digits:
+        return None
+    try:
+        return str(int(digits))
+    except ValueError:
+        return None
+
+
+def _text_has_equivalent_dni(text: str, dni: str) -> bool:
+    if not text:
+        return False
+
+    req_norm = _normalize_dni_digits(dni)
+    if not req_norm:
+        return False
+
+    if dni in text:
+        return True
+
+    # El bot a veces devuelve DNI sin ceros a la izquierda.
+    for cand in re.findall(r"\b\d{7,8}\b", text):
+        cand_norm = _normalize_dni_digits(cand)
+        if cand_norm and cand_norm == req_norm:
+            return True
+    return False
+
+
 def _looks_like_kaisen_payload(text: str, dni: str) -> bool:
     if not text:
         return False
     t = text.strip().upper()
-    return dni in t and "DNI" in t and ("NOMBRES" in t or "APELLIDOS" in t)
+    return (
+        _text_has_equivalent_dni(t, dni)
+        and "DNI" in t
+        and ("NOMBRES" in t or "APELLIDOS" in t)
+    )
 
 
 def _message_is_related_to_query(
@@ -936,7 +977,11 @@ def _message_is_related_to_query(
     if rpid and rpid in root_ids:
         return True
     text = (getattr(msg, "raw_text", "") or "").strip()
-    if text and (dni_re.search(text) or cmd in text):
+    if text and (
+        dni_re.search(text)
+        or cmd in text
+        or _text_has_equivalent_dni(text, dni)
+    ):
         return True
     return False
 
@@ -1048,6 +1093,26 @@ async def fetch_payload_from_bot(
                     text[:150].replace("\n", " "),
                 )
                 raise BotDniInvalidException()
+
+            # Payload con DNI distinto al solicitado: cortar para evitar espera larga.
+            if is_related and text and ("DNI" in text.upper()) and (
+                "NOMBRES" in text.upper() or "APELLIDOS" in text.upper()
+            ):
+                m_payload_dni = re.search(
+                    r"\bDNI\b[^\d]*(\d{7,8})\b", text, re.IGNORECASE
+                )
+                if m_payload_dni:
+                    got_dni = m_payload_dni.group(1)
+                    got_norm = _normalize_dni_digits(got_dni)
+                    req_norm = _normalize_dni_digits(dni)
+                    if got_norm and req_norm and got_norm != req_norm:
+                        logger.warning(
+                            "[%s] TG DNI MISMATCH req=%s got=%s -> abort attempt",
+                            req_id,
+                            dni,
+                            got_dni,
+                        )
+                        raise BotDniMismatchException(got_dni=got_dni)
 
             # --- NO INFO ---
             if is_related and text and RE_KAISEN_NOINFO.search(text):
@@ -1494,6 +1559,25 @@ async def consulta(
         logger.info("[%s] BOT_DNI_INVALIDO -> muere sin guardar BD, dni=%s", req_id, dni)
         resp = minimal_null_response(
             dni, debug=debug, reason="dni_invalido_grupo"
+        )
+        if debug:
+            resp["ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        return resp
+
+    except BotDniMismatchException as e:
+        # El bot respondio para otro DNI; no guardar y responder rapido.
+        app.state.metrics.telegram_errors += 1
+        cb.record_failure()
+        adaptive.on_error()
+        logger.warning(
+            "[%s] BOT_DNI_MISMATCH req=%s got=%s -> return null",
+            req_id,
+            dni,
+            e.got_dni,
+        )
+        extra = {"got_dni": e.got_dni} if debug and e.got_dni else None
+        resp = minimal_null_response(
+            dni, debug=debug, reason="dni_mismatch_bot_response", extra=extra
         )
         if debug:
             resp["ms"] = round((time.perf_counter() - t0) * 1000, 2)
