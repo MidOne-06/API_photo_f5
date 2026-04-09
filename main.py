@@ -338,6 +338,12 @@ RE_ANTI_SPAM_ON = re.compile(r"\[\s*ANTI-SPAM\s+ACTIVADO\s*\]", re.IGNORECASE)
 ANTI_SPAM_TEXT_OLD = "🚨 ¡Atención! Reporta a tu revendedor 🚨"
 
 
+RE_PROCESSING_MESSAGE = re.compile(
+    r"(procesando\s+tu\s+solicitud|un\s+momento\s+por\s+favor|espere\s+un\s+momento)",
+    re.IGNORECASE,
+)
+
+
 def parse_antispam_wait_seconds(text: str) -> Optional[float]:
     for rx in (RE_WAIT_SECS_1, RE_WAIT_SECS_2, RE_WAIT_SECS_3, RE_WAIT_SECS_4):
         m = rx.search(text)
@@ -454,6 +460,38 @@ def _parse_estatura_cm(s: Optional[str]) -> Optional[int]:
     return None
 
 
+def _parse_creditos_fields(
+    s: Optional[str],
+) -> Dict[str, Optional[Any]]:
+    out: Dict[str, Optional[Any]] = {
+        "creditos": None,
+        "creditos_plan": None,
+        "creditos_codigo": None,
+    }
+    cleaned = _clean_value(s)
+    if not cleaned:
+        return out
+
+    m = re.match(
+        r"^\s*(\d+)(?:\s*-\s*([A-Za-z0-9_]+))?(?:\s*-\s*([A-Za-z0-9_]+))?\s*$",
+        cleaned,
+    )
+    if m:
+        out["creditos"] = _to_int(m.group(1))
+        out["creditos_plan"] = _clean_value(m.group(2))
+        out["creditos_codigo"] = _clean_value(m.group(3))
+        return out
+
+    out["creditos"] = _to_int_from_text(cleaned)
+    parts = [_clean_value(p) for p in cleaned.split("-")]
+    parts = [p for p in parts if p]
+    if len(parts) >= 2:
+        out["creditos_plan"] = parts[1]
+    if len(parts) >= 3:
+        out["creditos_codigo"] = parts[2]
+    return out
+
+
 def grab_line_variants(text: Optional[str], labels: List[str]) -> Optional[str]:
     if not text:
         return None
@@ -510,6 +548,7 @@ def parse_kaisen_text(text: str) -> Dict[str, Any]:
         "fecha_inscripcion": None,
         "fecha_emision": None,
         "fecha_caducidad": None,
+        "donante_organos": None,
         "padre": None,
         "madre": None,
         "restriccion": None,
@@ -527,6 +566,10 @@ def parse_kaisen_text(text: str) -> Dict[str, Any]:
         "cert_nacido": None,
         "cert_defuncion": None,
         "hijos": None,
+        "creditos": None,
+        "creditos_plan": None,
+        "creditos_codigo": None,
+        "usuario_cuenta": None,
         "data_raw": raw,
     }
 
@@ -551,6 +594,7 @@ def parse_kaisen_text(text: str) -> Dict[str, Any]:
     sec_dir = _slice_section(raw, r"DOMICILIO|DIRECCION|DIRECCIÓN", headers)
     sec_ubi = _slice_section(raw, r"UBIGEOS|UBICACION|UBICACIÓN", headers)
     sec_act = _slice_section(raw, r"ACTAS", headers)
+    sec_account = _slice_section(raw, r"ESTADO\s+DE\s+CUENTA", headers)
 
     nac_target = sec_nac or raw
     out["fecha_nacimiento"] = _parse_date_ddmmyyyy(
@@ -589,6 +633,9 @@ def parse_kaisen_text(text: str) -> Dict[str, Any]:
     )
     out["fecha_caducidad"] = _parse_date_ddmmyyyy(
         grab_line_variants(info_target, ["FECHA CADUCIDAD"])
+    )
+    out["donante_organos"] = grab_line_variants(
+        info_target, ["DONANTE ORGANOS", "DONANTE ÓRGANOS"]
     )
     out["padre"] = grab_line_variants(info_target, ["PADRE"])
     out["madre"] = grab_line_variants(info_target, ["MADRE"])
@@ -641,6 +688,11 @@ def parse_kaisen_text(text: str) -> Dict[str, Any]:
 
     out["hijos"] = _to_int_from_text(grab_line_variants(raw, ["HIJOS"]))
 
+    account_target = sec_account or raw
+    creditos_line = grab_line_variants(account_target, ["CREDITOS", "CRÉDITOS"])
+    out.update(_parse_creditos_fields(creditos_line))
+    out["usuario_cuenta"] = grab_line_variants(account_target, ["USUARIO"])
+
     return out
 
 
@@ -652,24 +704,35 @@ UPSERT_COLS = [
     "dni", "foto", "dni_dv", "apellidos", "nombres", "genero",
     "fecha_nacimiento", "edad", "nac_departamento", "nac_provincia",
     "nac_distrito", "grado_instruccion", "estado_civil", "estatura_cm",
-    "fecha_inscripcion", "fecha_emision", "fecha_caducidad", "padre",
+    "fecha_inscripcion", "fecha_emision", "fecha_caducidad", "donante_organos",
+    "padre",
     "madre", "restriccion", "dir_departamento", "dir_provincia",
     "dir_distrito", "direccion", "ubigeo_reniec", "ubigeo_inei",
     "ubigeo_sunat", "codigo_postal", "acta_matrimonio",
     "acta_nacimiento", "acta_defuncion", "cert_nacido",
-    "cert_defuncion", "hijos", "data_raw",
+    "cert_defuncion", "hijos", "creditos", "creditos_plan",
+    "creditos_codigo", "usuario_cuenta", "data_raw",
 ]
+
+OPTIONAL_COLUMN_DEFS: Dict[str, str] = {
+    "donante_organos": "TEXT",
+    "creditos": "INTEGER",
+    "creditos_plan": "TEXT",
+    "creditos_codigo": "TEXT",
+    "usuario_cuenta": "TEXT",
+}
 
 
 class DatabaseManager:
     def __init__(self, config: Dict[str, Any]):
         self.pool = ThreadedConnectionPool(POOL_MIN_CONN, POOL_MAX_CONN, **config)
-        self.sql_upsert = self._build_upsert_query()
+        self.upsert_cols: List[str] = []
+        self.sql_upsert = ""
 
-    def _build_upsert_query(self) -> str:
-        cols_insert = ", ".join(UPSERT_COLS + ["last_updated"])
-        placeholders = ", ".join(["%s"] * len(UPSERT_COLS) + ["CURRENT_TIMESTAMP"])
-        set_updates = [f"{c} = EXCLUDED.{c}" for c in UPSERT_COLS if c != "dni"]
+    def _build_upsert_query(self, upsert_cols: List[str]) -> str:
+        cols_insert = ", ".join(upsert_cols + ["last_updated"])
+        placeholders = ", ".join(["%s"] * len(upsert_cols) + ["CURRENT_TIMESTAMP"])
+        set_updates = [f"{c} = EXCLUDED.{c}" for c in upsert_cols if c != "dni"]
         set_updates.append("last_updated = CURRENT_TIMESTAMP")
         return f"""
             INSERT INTO public.clientes ({cols_insert})
@@ -677,6 +740,50 @@ class DatabaseManager:
             ON CONFLICT (dni)
             DO UPDATE SET {", ".join(set_updates)}
         """
+
+    def _resolve_upsert_columns(self) -> List[str]:
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='clientes'
+                    """
+                )
+                table_cols = {row[0] for row in cur.fetchall()}
+        finally:
+            self.return_connection(conn)
+
+        required = {"dni", "foto", "data_raw"}
+        missing_required = sorted(required - table_cols)
+        if missing_required:
+            raise RuntimeError(
+                "Tabla 'public.clientes' no tiene columnas requeridas: "
+                + ", ".join(missing_required)
+            )
+
+        active = [c for c in UPSERT_COLS if c in table_cols]
+        missing = [c for c in UPSERT_COLS if c not in table_cols]
+        if missing:
+            logger.warning(
+                "Columnas no presentes en BD (se omiten en upsert): %s",
+                ", ".join(missing),
+            )
+        return active
+
+    def _ensure_optional_columns(self):
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                for col, sql_type in OPTIONAL_COLUMN_DEFS.items():
+                    cur.execute(
+                        f"ALTER TABLE public.clientes ADD COLUMN IF NOT EXISTS {col} {sql_type}"
+                    )
+            conn.commit()
+        finally:
+            self.return_connection(conn)
 
     def get_connection(self):
         return self.pool.getconn()
@@ -699,6 +806,11 @@ class DatabaseManager:
                     raise RuntimeError("Tabla 'public.clientes' no existe.")
         finally:
             self.return_connection(conn)
+
+        self._ensure_optional_columns()
+        self.upsert_cols = self._resolve_upsert_columns()
+        self.sql_upsert = self._build_upsert_query(self.upsert_cols)
+        logger.info("Upsert activo con %d columnas", len(self.upsert_cols))
 
     def ping(self) -> bool:
         try:
@@ -741,9 +853,11 @@ class DatabaseManager:
         return cleaned
 
     def upsert_record(self, record: Dict[str, Any]):
+        if not self.upsert_cols or not self.sql_upsert:
+            raise RuntimeError("DatabaseManager no inicializado para upsert.")
         conn = self.get_connection()
         try:
-            values = [record.get(col) for col in UPSERT_COLS]
+            values = [record.get(col) for col in self.upsert_cols]
             with conn.cursor() as cur:
                 cur.execute(self.sql_upsert, values)
                 conn.commit()
@@ -759,7 +873,7 @@ class DatabaseManager:
                 )
                 try:
                     cleaned = self._sanitize_texts_for_latin1(record)
-                    values = [cleaned.get(col) for col in UPSERT_COLS]
+                    values = [cleaned.get(col) for col in self.upsert_cols]
                     with conn.cursor() as cur:
                         cur.execute(self.sql_upsert, values)
                         conn.commit()
@@ -798,10 +912,9 @@ def minimal_null_response(
     reason: Optional[str] = None,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    resp: Dict[str, Any] = {
-        "dni": dni,
-        "foto": None,
-    }
+    resp: Dict[str, Any] = {k: None for k in UPSERT_COLS}
+    resp["dni"] = dni
+    resp["foto"] = None
     if debug:
         if reason is not None:
             resp["reason"] = reason
@@ -1062,6 +1175,9 @@ async def fetch_payload_from_bot(
             is_related = _message_is_related_to_query(
                 msg, dni, dni_re, root_ids, cmd
             )
+            is_processing_message = bool(
+                text and RE_PROCESSING_MESSAGE.search(text)
+            )
 
             # Ignorar mensajes de otros senders
             if main_sender_id and sid and sid != main_sender_id:
@@ -1168,6 +1284,13 @@ async def fetch_payload_from_bot(
 
             if getattr(msg, "photo", None) and is_related:
                 relevant_photo_count += 1
+                if is_processing_message:
+                    logger.info(
+                        "[%s] TG WAITING photo #%d ignored (processing message)",
+                        req_id,
+                        relevant_photo_count,
+                    )
+                    continue
                 logger.info(
                     "[%s] TG RELATED PHOTO #%d of target=%d (sid=%s reply_to=%s)",
                     req_id,

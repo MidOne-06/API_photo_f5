@@ -17,7 +17,7 @@ docker compose up --build -d
 
 ```bash
 docker compose ps
-docker logs -f api-reniec-foto-v1
+docker logs -f api_photo_f2
 ```
 
 El healthcheck consulta `GET /health` dentro del contenedor y solo marca el servicio como sano cuando:

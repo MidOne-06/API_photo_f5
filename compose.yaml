@@ -1,10 +1,10 @@
 services:
-  api_reniec_foto_v1:
+  api_photo_f2:
     build:
       context: .
       dockerfile: Dockerfile
-    image: api-reniec-foto-v1
-    container_name: api-reniec-foto-v1
+    image: api_photo_f2
+    container_name: api_photo_f2
     restart: unless-stopped
     init: true
     env_file:
