@@ -714,6 +714,24 @@ class DatabaseManager:
         finally:
             self.return_connection(conn)
 
+    def _sanitize_texts_for_latin1(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Si el servidor PG está en LATIN1 y llegan emojis/caracteres fuera de rango,
+        intentamos reinsertar eliminando los no representables para evitar que falle todo.
+        """
+        cleaned: Dict[str, Any] = {}
+        for k, v in record.items():
+            if isinstance(v, str):
+                try:
+                    v.encode("latin-1")
+                    cleaned[k] = v
+                except UnicodeEncodeError:
+                    cleaned[k] = v.encode("latin-1", "ignore").decode("latin-1")
+                    logger.debug("Sanitized field %s removing non-latin1 chars", k)
+            else:
+                cleaned[k] = v
+        return cleaned
+
     def upsert_record(self, record: Dict[str, Any]):
         conn = self.get_connection()
         try:
@@ -721,9 +739,32 @@ class DatabaseManager:
             with conn.cursor() as cur:
                 cur.execute(self.sql_upsert, values)
                 conn.commit()
+                return
         except Exception as e:
-            conn.rollback()
-            logger.warning("DB upsert error (%s): %s", record.get("dni"), e)
+            msg = str(e)
+            # Reintenta una vez sanitizando si parece error de encoding latin-1
+            if "latin-1" in msg or "encoding" in msg:
+                logger.warning(
+                    "DB upsert error por encoding (%s): %s -> reintentando sin emojis",
+                    record.get("dni"),
+                    e,
+                )
+                try:
+                    cleaned = self._sanitize_texts_for_latin1(record)
+                    values = [cleaned.get(col) for col in UPSERT_COLS]
+                    with conn.cursor() as cur:
+                        cur.execute(self.sql_upsert, values)
+                        conn.commit()
+                        logger.info("DB upsert sanitizado OK (%s)", record.get("dni"))
+                        return
+                except Exception as e2:
+                    conn.rollback()
+                    logger.warning(
+                        "DB upsert retry failed (%s): %s", record.get("dni"), e2
+                    )
+            else:
+                conn.rollback()
+                logger.warning("DB upsert error (%s): %s", record.get("dni"), e)
         finally:
             self.return_connection(conn)
 
