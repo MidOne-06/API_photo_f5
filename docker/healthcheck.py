@@ -6,7 +6,7 @@ from urllib.request import urlopen
 
 
 def main() -> int:
-    port = os.getenv("PORT", "8056").strip() or "8056"
+    port = os.getenv("PORT", "8023").strip() or "8023"
     url = f"http://127.0.0.1:{port}/health"
 
     try:

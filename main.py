@@ -58,7 +58,7 @@ logger = logging.getLogger("api_foto_f1")
 # ═══════════════════════════════════════════════════════════════════════════
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "API_FOTO_F1")
-PORT = int(os.getenv("PORT", "8056"))
+PORT = int(os.getenv("PORT", "8023"))
 
 CORS_ORIGINS = [
     o.strip()

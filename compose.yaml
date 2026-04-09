@@ -7,16 +7,17 @@ services:
     container_name: api_photo_f2
     restart: unless-stopped
     init: true
+    user: "${CONTAINER_UID:-1000}:${CONTAINER_GID:-1000}"
     env_file:
       - .env
     environment:
-      PORT: ${PORT:-8056}
+      PORT: ${PORT:-8023}
       SESSION_FILE: /app/data/session_bot_ft
       STATE_FILE: /app/data/api_state.json
       PGCLIENTENCODING: ${PGCLIENTENCODING:-UTF8}
       DB_OPTIONS: ${DB_OPTIONS:-}
     ports:
-      - "${PORT:-8056}:${PORT:-8056}"
+      - "${PORT:-8023}:${PORT:-8023}"
     volumes:
       - ./data:/app/data
     read_only: true

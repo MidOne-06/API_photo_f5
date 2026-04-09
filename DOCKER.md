@@ -3,6 +3,9 @@
 ## Antes de levantar
 
 1. Completa tu archivo `.env` usando `.env.example` como referencia.
+   - En Linux, define `CONTAINER_UID` y `CONTAINER_GID` con tu usuario real:
+     - `id -u`
+     - `id -g`
 2. Si ya tienes una sesion de Telegram activa, copia estos archivos a `data/`:
    - `session_bot_ft.session`
    - `session_bot_ft.session-journal`
@@ -11,6 +14,19 @@
 
 ```bash
 docker compose up --build -d
+```
+
+Si es primer despliegue en Linux:
+
+```bash
+mkdir -p data
+```
+
+Si el contenedor reporta errores de sesion SQLite por permisos (`unable to open database file` o `readonly database`), corrige permisos en `data/`:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" data
+sudo chmod -R u+rwX,g+rwX data
 ```
 
 ## Ver estado
@@ -37,3 +53,4 @@ La carpeta `data/` del proyecto se monta en `/app/data` dentro del contenedor y 
 
 - La base de datos PostgreSQL sigue siendo externa; este compose no crea un contenedor de base.
 - El contenedor corre con usuario no root, filesystem raiz en solo lectura y `tmpfs` para `/tmp`.
+- Puerto por defecto: `8023`.
