@@ -7,7 +7,6 @@ services:
     container_name: api_photo_f2
     restart: unless-stopped
     init: true
-    user: "${CONTAINER_UID:-1000}:${CONTAINER_GID:-1000}"
     env_file:
       - .env
     environment:

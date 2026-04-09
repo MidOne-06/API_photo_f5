@@ -3,9 +3,6 @@
 ## Antes de levantar
 
 1. Completa tu archivo `.env` usando `.env.example` como referencia.
-   - En Linux, define `CONTAINER_UID` y `CONTAINER_GID` con tu usuario real:
-     - `id -u`
-     - `id -g`
 2. Si ya tienes una sesion de Telegram activa, copia estos archivos a `data/`:
    - `session_bot_ft.session`
    - `session_bot_ft.session-journal`
@@ -22,10 +19,10 @@ Si es primer despliegue en Linux:
 mkdir -p data
 ```
 
-Si el contenedor reporta errores de sesion SQLite por permisos (`unable to open database file` o `readonly database`), corrige permisos en `data/`:
+Si el contenedor reporta errores de sesion SQLite por permisos (`unable to open database file` o `readonly database`), corrige permisos en `data/` para el usuario `app` del contenedor (`UID=100`, `GID=101`):
 
 ```bash
-sudo chown -R "$(id -u):$(id -g)" data
+sudo chown -R 100:101 data
 sudo chmod -R u+rwX,g+rwX data
 ```
 
