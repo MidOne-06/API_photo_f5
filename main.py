@@ -51,14 +51,14 @@ logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
-logger = logging.getLogger("api_foto_f1")
+logger = logging.getLogger("api_photo_f3")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ⚙️ CONFIG
 # ═══════════════════════════════════════════════════════════════════════════
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "API_FOTO_F1")
-PORT = int(os.getenv("PORT", "8023"))
+SERVICE_NAME = os.getenv("SERVICE_NAME", "API_photo_f3")
+PORT = int(os.getenv("PORT", "8024"))
 
 CORS_ORIGINS = [
     o.strip()
@@ -1466,7 +1466,7 @@ async def lifespan(app: FastAPI):
         app.state.db.close_all()
 
 
-app = FastAPI(title="API_FOTO_F1", lifespan=lifespan)
+app = FastAPI(title="API_photo_f3", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

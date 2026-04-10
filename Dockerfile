@@ -3,7 +3,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PORT=8023 \
+    PORT=8024 \
     SESSION_FILE=/app/data/session_bot_ft \
     STATE_FILE=/app/data/api_state.json
 
@@ -24,7 +24,7 @@ RUN mkdir -p /app/data \
 
 USER app
 
-EXPOSE 8023
+EXPOSE 8024
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 CMD ["python", "/app/docker/healthcheck.py"]
 

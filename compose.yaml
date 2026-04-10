@@ -1,22 +1,22 @@
 services:
-  api_photo_f2:
+  api_photo_f3:
     build:
       context: .
       dockerfile: Dockerfile
-    image: api_photo_f2
-    container_name: api_photo_f2
+    image: api_photo_f3
+    container_name: api_photo_f3
     restart: unless-stopped
     init: true
     env_file:
       - .env
     environment:
-      PORT: ${PORT:-8023}
+      PORT: ${PORT:-8024}
       SESSION_FILE: /app/data/session_bot_ft
       STATE_FILE: /app/data/api_state.json
       PGCLIENTENCODING: ${PGCLIENTENCODING:-UTF8}
       DB_OPTIONS: ${DB_OPTIONS:-}
     ports:
-      - "${PORT:-8023}:${PORT:-8023}"
+      - "${PORT:-8024}:${PORT:-8024}"
     volumes:
       - ./data:/app/data
     read_only: true

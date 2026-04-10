@@ -30,7 +30,7 @@ sudo chmod -R u+rwX,g+rwX data
 
 ```bash
 docker compose ps
-docker logs -f api_photo_f2
+docker logs -f api_photo_f3
 ```
 
 El healthcheck consulta `GET /health` dentro del contenedor y solo marca el servicio como sano cuando:
@@ -50,4 +50,4 @@ La carpeta `data/` del proyecto se monta en `/app/data` dentro del contenedor y 
 
 - La base de datos PostgreSQL sigue siendo externa; este compose no crea un contenedor de base.
 - El contenedor corre con usuario no root, filesystem raiz en solo lectura y `tmpfs` para `/tmp`.
-- Puerto por defecto: `8023`.
+- Puerto por defecto: `8024`.
