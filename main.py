@@ -104,7 +104,7 @@ CB_FAIL_THRESHOLD = int(os.getenv("CB_FAIL_THRESHOLD", "5"))
 CB_COOLDOWN_SECS = int(os.getenv("CB_COOLDOWN_SECS", "120"))
 
 # Adaptive min interval
-ADAPTIVE_MIN_INTERVAL = os.getenv("ADAPTIVE_MIN_INTERVAL", "1").strip() == "1"
+ADAPTIVE_MIN_INTERVAL = os.getenv("ADAPTIVE_MIN_INTERVAL", "0").strip() == "1"
 ADAPTIVE_FLOOR = float(os.getenv("ADAPTIVE_FLOOR", "10"))
 ADAPTIVE_CEILING = float(os.getenv("ADAPTIVE_CEILING", "60"))
 
@@ -1235,7 +1235,7 @@ async def fetch_payload_from_bot(
                 logger.info("[%s] TG KAISEN NOINFO detected", req_id)
                 raise BotKaisenNoInfoException()
 
-            # --- ANTI-SPAM: extraer segundos + 1, reintentar ---
+            # --- ANTI-SPAM: extraer segundos, sumar 1s y respetar MIN_INTERVAL ---
             wait_s: Optional[float] = None
             if text:
                 wait_s = parse_antispam_wait_seconds(text)
@@ -1245,13 +1245,17 @@ async def fetch_payload_from_bot(
                     wait_s = 15.0
 
             if wait_s is not None:
-                # Sumar 1 segundo extra y reintentar
-                final_wait = wait_s + 1.0
+                # Nunca reenviar antes del intervalo minimo configurado.
+                final_wait = max(wait_s + 1.0, float(MIN_INTERVAL))
 
                 logger.warning(
-                    "[%s] TG anti-spam detectado: espera=%.1fs + 1s = %.1fs -> reintentando",
+                    (
+                        "[%s] TG anti-spam detectado: espera=%.1fs + 1s, "
+                        "MIN_INTERVAL=%ss => espera final=%.1fs -> reintentando"
+                    ),
                     req_id,
                     wait_s,
+                    MIN_INTERVAL,
                     final_wait,
                 )
 
