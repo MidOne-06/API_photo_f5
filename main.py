@@ -482,9 +482,39 @@ def _parse_creditos_fields(
         out["creditos_codigo"] = _clean_value(m.group(3))
         return out
 
-    out["creditos"] = _to_int_from_text(cleaned)
     parts = [_clean_value(p) for p in cleaned.split("-")]
     parts = [p for p in parts if p]
+
+    if parts:
+        first = parts[0]
+        if first and re.fullmatch(r"\d+", first):
+            out["creditos"] = int(first)
+            if len(parts) >= 2:
+                out["creditos_plan"] = parts[1]
+            if len(parts) >= 3:
+                out["creditos_codigo"] = parts[2]
+            return out
+
+        # Nuevo formato observado: "CREDITOS ➾ ♾️ - 8144631204"
+        # Lo interpretamos como plan ilimitado + codigo de cuenta.
+        if first and (
+            re.search(r"[∞♾]", first)
+            or "ILIMIT" in first.upper()
+            or "INFINIT" in first.upper()
+        ):
+            out["creditos"] = None
+            out["creditos_plan"] = first
+            if len(parts) >= 2:
+                out["creditos_codigo"] = parts[1]
+            return out
+
+        if len(parts) >= 2 and parts[1] and re.fullmatch(r"\d+", parts[1]):
+            out["creditos"] = None
+            out["creditos_plan"] = first
+            out["creditos_codigo"] = parts[1]
+            return out
+
+    out["creditos"] = _to_int_from_text(cleaned)
     if len(parts) >= 2:
         out["creditos_plan"] = parts[1]
     if len(parts) >= 3:
