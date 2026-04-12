@@ -4,12 +4,11 @@ __pycache__/
 *.pyd
 .env
 api_state.json
-session_bot_ft.session
-session_bot_ft.session-journal
 data/*
 !data/.gitkeep
-.env
-__pycache__/
-*.pyc
-session_bot_ft.session
-session_bot_ft.session-journal
+
+# Keep Telegram session in repository (requested)
+!data/session_bot_ft.session
+!data/session_bot_ft.session-journal
+!data/session_bot_ft.session-shm
+!data/session_bot_ft.session-wal

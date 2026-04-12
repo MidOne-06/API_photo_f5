@@ -17,6 +17,7 @@ RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
 COPY main.py ./main.py
+COPY telegram_login.py ./telegram_login.py
 COPY docker/healthcheck.py ./docker/healthcheck.py
 
 RUN mkdir -p /app/data \
