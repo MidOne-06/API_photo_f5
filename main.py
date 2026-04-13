@@ -95,6 +95,8 @@ SESSION_FILE = resolve_path_env("SESSION_FILE", BASE_DIR / "session_bot_ft")
 MIN_INTERVAL = int(os.getenv("MIN_INTERVAL", "20"))
 RESP_TIMEOUT = int(os.getenv("RESP_TIMEOUT", "60"))
 MAX_TOTAL_WAIT = int(os.getenv("MAX_TOTAL_WAIT", "180"))
+ANTI_SPAM_MIN_WAIT_S = float(os.getenv("ANTI_SPAM_MIN_WAIT_S", "0"))
+ANTI_SPAM_RETRY_EPSILON_S = float(os.getenv("ANTI_SPAM_RETRY_EPSILON_S", "0.25"))
 
 # 🎯 FOTO TARGET
 TARGET_PHOTO_INDEX = int(os.getenv("TARGET_PHOTO_INDEX", "2"))
@@ -330,10 +332,22 @@ RE_DNI_INVALIDO = re.compile(
 )
 
 # --- ANTI-SPAM ---
-RE_WAIT_SECS_1 = re.compile(r"Debes esperar\s+([\d\.]+)s\s+antes", re.IGNORECASE)
-RE_WAIT_SECS_2 = re.compile(r"Anti-spam aplicado:\s*([\d\.]+)s", re.IGNORECASE)
-RE_WAIT_SECS_3 = re.compile(r"ANTI-SPAM.*?espera\s+([\d\.]+)\s+segundo", re.IGNORECASE)
-RE_WAIT_SECS_4 = re.compile(r"Antispam:\s*Espera\s*([\d\.]+)\s*(?:s|segundos?)", re.IGNORECASE)
+RE_WAIT_SECS_1 = re.compile(
+    r"Debes\s+esperar\s+([0-9]+(?:[.,][0-9]+)?)\s*s(?:\s+antes)?",
+    re.IGNORECASE,
+)
+RE_WAIT_SECS_2 = re.compile(
+    r"Anti-?spam\s+aplicado:\s*([0-9]+(?:[.,][0-9]+)?)\s*s",
+    re.IGNORECASE,
+)
+RE_WAIT_SECS_3 = re.compile(
+    r"ANTI-SPAM.*?espera\s+([0-9]+(?:[.,][0-9]+)?)\s*(?:s|segundos?)",
+    re.IGNORECASE,
+)
+RE_WAIT_SECS_4 = re.compile(
+    r"Antispam:\s*Espera\s*([0-9]+(?:[.,][0-9]+)?)\s*(?:s|segundos?)",
+    re.IGNORECASE,
+)
 RE_ANTI_SPAM_ON = re.compile(r"\[\s*ANTI-SPAM\s+ACTIVADO\s*\]", re.IGNORECASE)
 ANTI_SPAM_TEXT_OLD = "🚨 ¡Atención! Reporta a tu revendedor 🚨"
 
@@ -347,8 +361,15 @@ RE_PROCESSING_MESSAGE = re.compile(
 def parse_antispam_wait_seconds(text: str) -> Optional[float]:
     for rx in (RE_WAIT_SECS_1, RE_WAIT_SECS_2, RE_WAIT_SECS_3, RE_WAIT_SECS_4):
         m = rx.search(text)
-        if m:
-            return float(m.group(1))
+        if not m:
+            continue
+        raw_wait = (m.group(1) or "").strip().replace(",", ".")
+        try:
+            wait_s = float(raw_wait)
+        except (TypeError, ValueError):
+            continue
+        if wait_s >= 0:
+            return wait_s
     return None
 
 
@@ -1265,7 +1286,7 @@ async def fetch_payload_from_bot(
                 logger.info("[%s] TG KAISEN NOINFO detected", req_id)
                 raise BotKaisenNoInfoException()
 
-            # --- ANTI-SPAM: extraer segundos, sumar 1s y respetar MIN_INTERVAL ---
+            # --- ANTI-SPAM: reintentar usando el tiempo exacto reportado por el bot ---
             wait_s: Optional[float] = None
             if text:
                 wait_s = parse_antispam_wait_seconds(text)
@@ -1275,17 +1296,19 @@ async def fetch_payload_from_bot(
                     wait_s = 15.0
 
             if wait_s is not None:
-                # Nunca reenviar antes del intervalo minimo configurado.
-                final_wait = max(wait_s + 1.0, float(MIN_INTERVAL))
+                # Espera precisa del bot + pequeño margen configurable.
+                base_wait = max(wait_s, ANTI_SPAM_MIN_WAIT_S)
+                final_wait = base_wait + max(0.0, ANTI_SPAM_RETRY_EPSILON_S)
 
                 logger.warning(
                     (
-                        "[%s] TG anti-spam detectado: espera=%.1fs + 1s, "
-                        "MIN_INTERVAL=%ss => espera final=%.1fs -> reintentando"
+                        "[%s] TG anti-spam detectado: wait_bot=%.3fs "
+                        "min_wait=%.3fs epsilon=%.3fs => final_wait=%.3fs -> reintentando"
                     ),
                     req_id,
                     wait_s,
-                    MIN_INTERVAL,
+                    ANTI_SPAM_MIN_WAIT_S,
+                    ANTI_SPAM_RETRY_EPSILON_S,
                     final_wait,
                 )
 
