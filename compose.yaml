@@ -1,10 +1,10 @@
 services:
-  api_photo_f3:
+  api_photo_f4:
     build:
       context: .
       dockerfile: Dockerfile
-    image: api_photo_f3
-    container_name: api_photo_f3
+    image: api_photo_f4
+    container_name: api_photo_f4
     restart: unless-stopped
     init: true
     env_file:

@@ -51,13 +51,13 @@ logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
-logger = logging.getLogger("api_photo_f3")
+logger = logging.getLogger("api_photo_f4")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ⚙️ CONFIG
 # ═══════════════════════════════════════════════════════════════════════════
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "API_photo_f3")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "API_photo_f4")
 PORT = int(os.getenv("PORT", "8024"))
 
 CORS_ORIGINS = [
@@ -92,11 +92,12 @@ BOT_COMMAND = os.getenv("BOT_COMMAND", "/dni").strip()
 SESSION_FILE = resolve_path_env("SESSION_FILE", BASE_DIR / "session_bot_ft")
 
 # Timers
-MIN_INTERVAL = int(os.getenv("MIN_INTERVAL", "20"))
+MIN_INTERVAL = int(os.getenv("MIN_INTERVAL", "22"))
 RESP_TIMEOUT = int(os.getenv("RESP_TIMEOUT", "60"))
 MAX_TOTAL_WAIT = int(os.getenv("MAX_TOTAL_WAIT", "180"))
 ANTI_SPAM_MIN_WAIT_S = float(os.getenv("ANTI_SPAM_MIN_WAIT_S", "0"))
 ANTI_SPAM_RETRY_EPSILON_S = float(os.getenv("ANTI_SPAM_RETRY_EPSILON_S", "0.25"))
+SAME_DNI_BURST_WINDOW_S = float(os.getenv("SAME_DNI_BURST_WINDOW_S", "3"))
 
 # 🎯 FOTO TARGET
 TARGET_PHOTO_INDEX = int(os.getenv("TARGET_PHOTO_INDEX", "2"))
@@ -1490,6 +1491,7 @@ async def lifespan(app: FastAPI):
 
     app.state.dnis_lock = asyncio.Lock()
     app.state.dnis_in_progress: set = set()
+    app.state.dni_recent_started: Dict[str, float] = {}
 
     app.state.banned_until = load_persistent_state()
 
@@ -1519,7 +1521,7 @@ async def lifespan(app: FastAPI):
         app.state.db.close_all()
 
 
-app = FastAPI(title="API_photo_f3", lifespan=lifespan)
+app = FastAPI(title="API_photo_f4", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1657,14 +1659,48 @@ async def consulta(
                 return resp
 
     # ── In-progress check ──
+    now_perf = time.perf_counter()
     async with app.state.dnis_lock:
+        recent_map: Dict[str, float] = app.state.dni_recent_started
+
+        # Limpieza simple para no crecer indefinidamente.
+        if recent_map:
+            expire_before = now_perf - max(0.0, SAME_DNI_BURST_WINDOW_S)
+            stale_keys = [
+                k for k, started_at in recent_map.items()
+                if started_at < expire_before
+            ]
+            for k in stale_keys:
+                recent_map.pop(k, None)
+
         if dni in app.state.dnis_in_progress:
             logger.info("[%s] IN_PROGRESS dni=%s -> return null", req_id, dni)
             resp = minimal_null_response(dni, debug=debug, reason="in_progress")
             if debug:
                 resp["ms"] = round((time.perf_counter() - t0) * 1000, 2)
             return resp
+
+        last_started = recent_map.get(dni)
+        if (
+            last_started is not None
+            and (now_perf - last_started) <= SAME_DNI_BURST_WINDOW_S
+        ):
+            logger.info(
+                "[%s] DUPLICATE_BURST dni=%s age=%.3fs window=%.3fs -> return null",
+                req_id,
+                dni,
+                now_perf - last_started,
+                SAME_DNI_BURST_WINDOW_S,
+            )
+            resp = minimal_null_response(
+                dni, debug=debug, reason="duplicate_burst_window"
+            )
+            if debug:
+                resp["ms"] = round((time.perf_counter() - t0) * 1000, 2)
+            return resp
+
         app.state.dnis_in_progress.add(dni)
+        recent_map[dni] = now_perf
 
     adaptive: AdaptiveInterval = app.state.adaptive_interval
 

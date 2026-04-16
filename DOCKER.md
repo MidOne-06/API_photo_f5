@@ -30,7 +30,7 @@ sudo chmod -R u+rwX,g+rwX data
 
 ```bash
 docker compose ps
-docker logs -f api_photo_f3
+docker logs -f api_photo_f4
 ```
 
 El healthcheck consulta `GET /health` dentro del contenedor y solo marca el servicio como sano cuando:
