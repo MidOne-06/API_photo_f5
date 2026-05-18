@@ -59,6 +59,7 @@ logger = logging.getLogger("api_photo_f4")
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "API_photo_f4")
 PORT = int(os.getenv("PORT", "8024"))
+DB_ONLY_MODE = os.getenv("DB_ONLY_MODE", "0").strip() == "1"
 
 CORS_ORIGINS = [
     o.strip()
@@ -101,6 +102,8 @@ SAME_DNI_BURST_WINDOW_S = float(os.getenv("SAME_DNI_BURST_WINDOW_S", "3"))
 
 # 🎯 FOTO TARGET
 TARGET_PHOTO_INDEX = int(os.getenv("TARGET_PHOTO_INDEX", "2"))
+DELETE_TG_MESSAGES = os.getenv("DELETE_TG_MESSAGES", "1").strip() == "1"
+DELETE_TG_MESSAGES_REVOKE = os.getenv("DELETE_TG_MESSAGES_REVOKE", "1").strip() == "1"
 
 # Circuit breaker
 CB_FAIL_THRESHOLD = int(os.getenv("CB_FAIL_THRESHOLD", "5"))
@@ -357,6 +360,7 @@ RE_PROCESSING_MESSAGE = re.compile(
     r"(procesando\s+tu\s+solicitud|un\s+momento\s+por\s+favor|espere\s+un\s+momento)",
     re.IGNORECASE,
 )
+RE_LEADING_BRAND_LINE = re.compile(r"^\s*\[#\s*[A-Za-z0-9_]+\s*\]\s*$")
 
 
 def parse_antispam_wait_seconds(text: str) -> Optional[float]:
@@ -372,6 +376,16 @@ def parse_antispam_wait_seconds(text: str) -> Optional[float]:
         if wait_s >= 0:
             return wait_s
     return None
+
+
+def strip_leading_brand_line(text: str) -> str:
+    if not text:
+        return text
+    normalized = text.replace("\r", "")
+    lines = normalized.split("\n")
+    if lines and RE_LEADING_BRAND_LINE.match(lines[0] or ""):
+        return "\n".join(lines[1:]).lstrip("\n")
+    return normalized
 
 
 def is_bot_internal_error(text: str) -> bool:
@@ -1151,6 +1165,40 @@ def _message_is_related_to_query(
     return False
 
 
+async def _cleanup_query_messages(
+    client: TelegramClient,
+    chat: Any,
+    req_id: str,
+    sent_ids: set,
+    response_ids: set,
+) -> None:
+    if not DELETE_TG_MESSAGES:
+        return
+    ids = sorted(
+        {
+            int(mid)
+            for mid in (set(sent_ids) | set(response_ids))
+            if isinstance(mid, int) and mid > 0
+        }
+    )
+    if not ids:
+        return
+    try:
+        await client.delete_messages(chat, ids, revoke=DELETE_TG_MESSAGES_REVOKE)
+        logger.info(
+            "[%s] TG CLEANUP deleted=%d sent=%d response=%d revoke=%s",
+            req_id,
+            len(ids),
+            len(set(sent_ids)),
+            len(set(response_ids)),
+            DELETE_TG_MESSAGES_REVOKE,
+        )
+    except RPCError as e:
+        logger.warning("[%s] TG CLEANUP RPCError: %s", req_id, e)
+    except Exception as e:
+        logger.warning("[%s] TG CLEANUP error: %s", req_id, e)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 🧭 TELEGRAM: captura FOTO + TEXTO
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1165,6 +1213,8 @@ async def fetch_payload_from_bot(
 ) -> Optional[Dict[str, Any]]:
     cmd = f"{BOT_COMMAND} {dni}".strip()
     dni_re = re.compile(re.escape(dni), re.IGNORECASE)
+    sent_message_ids: set[int] = set()
+    response_message_ids: set[int] = set()
 
     async with client.conversation(chat, timeout=None) as conv:
         logger.info(
@@ -1180,7 +1230,18 @@ async def fetch_payload_from_bot(
             logger.error(
                 "[%s] No se puede escribir al chat configurado", req_id
             )
+            await _cleanup_query_messages(
+                client,
+                chat,
+                req_id,
+                sent_ids=sent_message_ids,
+                response_ids=response_message_ids,
+            )
             raise
+
+        sent_id = getattr(sent, "id", None)
+        if isinstance(sent_id, int) and sent_id > 0:
+            sent_message_ids.add(sent_id)
 
         root_ids: set = {sent.id}
         start_time = time.perf_counter()
@@ -1196,6 +1257,13 @@ async def fetch_payload_from_bot(
                 logger.warning(
                     "[%s] TG TIMEOUT total=%.1fs dni=%s", req_id, elapsed, dni
                 )
+                await _cleanup_query_messages(
+                    client,
+                    chat,
+                    req_id,
+                    sent_ids=sent_message_ids,
+                    response_ids=response_message_ids,
+                )
                 return None
 
             try:
@@ -1205,6 +1273,7 @@ async def fetch_payload_from_bot(
             except asyncio.TimeoutError:
                 continue
 
+            msg_id = getattr(msg, "id", None)
             text = (getattr(msg, "raw_text", "") or "").strip()
             sid = getattr(msg, "sender_id", None)
             rpid = getattr(msg, "reply_to_msg_id", None)
@@ -1231,6 +1300,14 @@ async def fetch_payload_from_bot(
                 text and RE_PROCESSING_MESSAGE.search(text)
             )
 
+            if is_related and isinstance(msg_id, int) and msg_id > 0:
+                if (
+                    (rpid and rpid in root_ids)
+                    or (main_sender_id and sid == main_sender_id)
+                    or (main_sender_id is None)
+                ):
+                    response_message_ids.add(msg_id)
+
             # Ignorar mensajes de otros senders
             if main_sender_id and sid and sid != main_sender_id:
                 continue
@@ -1242,6 +1319,13 @@ async def fetch_payload_from_bot(
             # --- BANEO ---
             if text and (RE_BANNED_1.search(text) or RE_BANNED_2.search(text)):
                 logger.warning("[%s] TG BANNED message detected", req_id)
+                await _cleanup_query_messages(
+                    client,
+                    chat,
+                    req_id,
+                    sent_ids=sent_message_ids,
+                    response_ids=response_message_ids,
+                )
                 raise BotBannedException()
 
             # --- ERROR INTERNO: muere, no guarda BD, no reintenta ---
@@ -1251,6 +1335,13 @@ async def fetch_payload_from_bot(
                     req_id,
                     text[:150].replace("\n", " "),
                 )
+                await _cleanup_query_messages(
+                    client,
+                    chat,
+                    req_id,
+                    sent_ids=sent_message_ids,
+                    response_ids=response_message_ids,
+                )
                 raise BotInternalError(text)
 
             # --- DNI INVÁLIDO: muere, no guarda BD, no reintenta ---
@@ -1259,6 +1350,13 @@ async def fetch_payload_from_bot(
                     "[%s] TG DNI INVALIDO detected: %s",
                     req_id,
                     text[:150].replace("\n", " "),
+                )
+                await _cleanup_query_messages(
+                    client,
+                    chat,
+                    req_id,
+                    sent_ids=sent_message_ids,
+                    response_ids=response_message_ids,
                 )
                 raise BotDniInvalidException()
 
@@ -1280,11 +1378,25 @@ async def fetch_payload_from_bot(
                             dni,
                             got_dni,
                         )
+                        await _cleanup_query_messages(
+                            client,
+                            chat,
+                            req_id,
+                            sent_ids=sent_message_ids,
+                            response_ids=response_message_ids,
+                        )
                         raise BotDniMismatchException(got_dni=got_dni)
 
             # --- NO INFO ---
             if is_related and text and RE_KAISEN_NOINFO.search(text):
                 logger.info("[%s] TG KAISEN NOINFO detected", req_id)
+                await _cleanup_query_messages(
+                    client,
+                    chat,
+                    req_id,
+                    sent_ids=sent_message_ids,
+                    response_ids=response_message_ids,
+                )
                 raise BotKaisenNoInfoException()
 
             # --- ANTI-SPAM: reintentar usando el tiempo exacto reportado por el bot ---
@@ -1326,8 +1438,18 @@ async def fetch_payload_from_bot(
                         "[%s] No se puede reescribir al chat configurado",
                         req_id,
                     )
+                    await _cleanup_query_messages(
+                        client,
+                        chat,
+                        req_id,
+                        sent_ids=sent_message_ids,
+                        response_ids=response_message_ids,
+                    )
                     raise
 
+                res_id = getattr(res, "id", None)
+                if isinstance(res_id, int) and res_id > 0:
+                    sent_message_ids.add(res_id)
                 root_ids = {res.id}
                 foto_b64 = None
                 text_raw = None
@@ -1386,7 +1508,13 @@ async def fetch_payload_from_bot(
                 and _looks_like_kaisen_payload(text, dni)
                 and text_raw is None
             ):
-                text_raw = text
+                cleaned_text = strip_leading_brand_line(text)
+                text_raw = cleaned_text
+                if cleaned_text != text:
+                    logger.info(
+                        "[%s] TG brand line removed from payload header",
+                        req_id,
+                    )
                 logger.info("[%s] TG TEXT payload captured", req_id)
 
             # ══════════════════════════════════════════════════════════
@@ -1402,6 +1530,13 @@ async def fetch_payload_from_bot(
                     "[%s] TG SUCCESS (foto #%d + texto) -> returning",
                     req_id,
                     TARGET_PHOTO_INDEX,
+                )
+                await _cleanup_query_messages(
+                    client,
+                    chat,
+                    req_id,
+                    sent_ids=sent_message_ids,
+                    response_ids=response_message_ids,
                 )
                 return parsed
 
@@ -1495,6 +1630,15 @@ async def lifespan(app: FastAPI):
 
     app.state.banned_until = load_persistent_state()
 
+    if DB_ONLY_MODE:
+        app.state.client = None
+        app.state.bot_chat = None
+        logger.info("DB_ONLY_MODE=1: consulta solo BD (Telegram deshabilitado)")
+        yield
+        if getattr(app.state, "db", None):
+            app.state.db.close_all()
+        return
+
     client = TelegramClient(str(SESSION_FILE), API_ID, API_HASH)
     await client.start()
     app.state.client = client
@@ -1542,8 +1686,8 @@ async def health():
     db: DatabaseManager = app.state.db
     db_ok = await run_in_threadpool(db.ping)
 
-    tg_connected = False
-    if getattr(app.state, "client", None):
+    tg_connected = DB_ONLY_MODE
+    if not DB_ONLY_MODE and getattr(app.state, "client", None):
         tg_connected = app.state.client.is_connected()
 
     banned = False
@@ -1556,7 +1700,11 @@ async def health():
         "status": status,
         "service": SERVICE_NAME,
         "database": "ok" if db_ok else "error",
-        "telegram": "connected" if tg_connected else "disconnected",
+        "telegram": (
+            "disabled" if DB_ONLY_MODE
+            else ("connected" if tg_connected else "disconnected")
+        ),
+        "db_only_mode": DB_ONLY_MODE,
         "banned": banned,
         "banned_until": (
             app.state.banned_until.isoformat()
@@ -1594,6 +1742,7 @@ async def consulta(
 ):
     req_id = uuid.uuid4().hex[:10]
     t0 = time.perf_counter()
+    cached_incomplete: Optional[Dict[str, Any]] = None
 
     app.state.metrics.total_requests += 1
 
@@ -1602,6 +1751,34 @@ async def consulta(
         raise HTTPException(400, "DNI inválido.")
 
     logger.info("[%s] REQ dni=%s refresh=%s debug=%s", req_id, dni, refresh, debug)
+
+    def cached_incomplete_fallback(
+        reason: str,
+        lock_wait_ms: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not cached_incomplete:
+            return None
+        payload = normalize_success_payload(cached_incomplete)
+        if debug:
+            payload["reason"] = reason
+            if lock_wait_ms is not None:
+                payload["lock_wait_ms"] = round(lock_wait_ms, 2)
+            payload["ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        return payload
+
+    db: DatabaseManager = app.state.db
+    if DB_ONLY_MODE:
+        row = await run_in_threadpool(db.get_dni_by_pk, dni)
+        if row:
+            payload = normalize_success_payload(row)
+            if debug:
+                payload["reason"] = "db_only_row_found"
+                payload["ms"] = round((time.perf_counter() - t0) * 1000, 2)
+            return payload
+        resp = minimal_null_response(dni, debug=debug, reason="db_only_not_found")
+        if debug:
+            resp["ms"] = round((time.perf_counter() - t0) * 1000, 2)
+        return resp
 
     # ��─ Banned check ──
     if app.state.banned_until and datetime.now() < app.state.banned_until:
@@ -1651,12 +1828,13 @@ async def consulta(
                 return payload
 
             if foto_is_null:
-                resp = minimal_null_response(
-                    dni, debug=debug, reason="db_negative_cache_foto_null"
+                logger.info(
+                    "[%s] DB HIT con foto null dni=%s -> consultando Telegram",
+                    req_id,
+                    dni,
                 )
-                if debug:
-                    resp["ms"] = round((time.perf_counter() - t0) * 1000, 2)
-                return resp
+
+            cached_incomplete = cached
 
     # ── In-progress check ──
     now_perf = time.perf_counter()
@@ -1748,6 +1926,12 @@ async def consulta(
         app.state.metrics.telegram_timeout += 1
         cb.record_failure()
         adaptive.on_error()
+        fallback_payload = cached_incomplete_fallback(
+            "db_cache_incomplete_telegram_no_payload",
+            lock_wait_ms=lock_wait_ms,
+        )
+        if fallback_payload:
+            return fallback_payload
         resp = minimal_null_response(
             dni, debug=debug, reason="telegram_no_payload"
         )
@@ -1762,6 +1946,11 @@ async def consulta(
         cb.record_failure()
         adaptive.on_error()
         logger.info("[%s] BOT_INTERNAL_ERROR -> muere sin guardar BD, dni=%s", req_id, dni)
+        fallback_payload = cached_incomplete_fallback(
+            "db_cache_incomplete_bot_internal_error"
+        )
+        if fallback_payload:
+            return fallback_payload
         resp = minimal_null_response(
             dni, debug=debug, reason="bot_internal_error"
         )
@@ -1791,6 +1980,11 @@ async def consulta(
             dni,
             e.got_dni,
         )
+        fallback_payload = cached_incomplete_fallback(
+            "db_cache_incomplete_dni_mismatch_bot_response"
+        )
+        if fallback_payload:
+            return fallback_payload
         extra = {"got_dni": e.got_dni} if debug and e.got_dni else None
         resp = minimal_null_response(
             dni, debug=debug, reason="dni_mismatch_bot_response", extra=extra
@@ -1834,6 +2028,11 @@ async def consulta(
         logger.exception(
             "[%s] ERROR ChatWriteForbidden dni=%s", req_id, dni
         )
+        fallback_payload = cached_incomplete_fallback(
+            "db_cache_incomplete_chat_write_forbidden"
+        )
+        if fallback_payload:
+            return fallback_payload
         resp = minimal_null_response(
             dni, debug=debug, reason="chat_write_forbidden"
         )
@@ -1848,6 +2047,11 @@ async def consulta(
         logger.exception(
             "[%s] ERROR INESPERADO dni=%s: %s", req_id, dni, e
         )
+        fallback_payload = cached_incomplete_fallback(
+            "db_cache_incomplete_unexpected_error"
+        )
+        if fallback_payload:
+            return fallback_payload
         resp = minimal_null_response(
             dni, debug=debug, reason=f"unexpected_error: {e}"
         )

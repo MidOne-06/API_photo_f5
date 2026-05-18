@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: api_photo_f4
-    container_name: api_photo_f4
+    container_name: fenixbot
     restart: unless-stopped
     init: true
     env_file:
@@ -17,6 +17,30 @@ services:
       DB_OPTIONS: ${DB_OPTIONS:-}
     ports:
       - "${PORT:-8024}:${PORT:-8024}"
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  api_photo_f4_cyber:
+    image: api_photo_f4
+    container_name: CYBER_DATA_BOT
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+      - .env.cyber
+    environment:
+      PORT: "8026"
+      SESSION_FILE: /app/data/session_bot_ft_cyber
+      STATE_FILE: /app/data/api_state_cyber.json
+      PGCLIENTENCODING: ${PGCLIENTENCODING:-UTF8}
+      DB_OPTIONS: ${DB_OPTIONS:-}
+    ports:
+      - "8026:8026"
     volumes:
       - ./data:/app/data
     read_only: true
