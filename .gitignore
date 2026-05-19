@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -7,8 +7,12 @@ api_state.json
 data/*
 !data/.gitkeep
 
-# Keep Telegram session in repository (requested)
-!data/session_bot_ft.session
-!data/session_bot_ft.session-journal
-!data/session_bot_ft.session-shm
-!data/session_bot_ft.session-wal
+# Keep Telegram sessions in repository (requested)
+!data/session_fenixbot.session
+!data/session_fenixbot.session-journal
+!data/session_fenixbot.session-shm
+!data/session_fenixbot.session-wal
+!data/session_bot_ft_cyber.session
+!data/session_bot_ft_cyber.session-journal
+!data/session_bot_ft_cyber.session-shm
+!data/session_bot_ft_cyber.session-wal
