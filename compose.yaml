@@ -11,7 +11,7 @@ services:
       - .env
     environment:
       PORT: ${PORT:-8024}
-      SESSION_FILE: /app/data/session_bot_ft
+      SESSION_FILE: /app/data/session_fenixbot
       STATE_FILE: /app/data/api_state.json
       PGCLIENTENCODING: ${PGCLIENTENCODING:-UTF8}
       DB_OPTIONS: ${DB_OPTIONS:-}

@@ -12,7 +12,7 @@ def _env(name: str, default: str = "") -> str:
 
 api_id = int(os.environ["TELEGRAM_API_ID"])
 api_hash = os.environ["TELEGRAM_API_HASH"]
-session = os.environ.get("SESSION_FILE", "/app/data/session_bot_ft")
+session = os.environ.get("SESSION_FILE", "/app/data/session_fenixbot")
 
 # Flujo por pasos (sin interacción):
 # 1) TG_PHONE=+51... python telegram_login.py      -> envía código y guarda hash
