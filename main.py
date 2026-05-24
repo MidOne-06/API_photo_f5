@@ -58,7 +58,7 @@ logger = logging.getLogger("api_photo_f4")
 # ═══════════════════════════════════════════════════════════════════════════
 
 SERVICE_NAME = os.getenv("SERVICE_NAME", "API_photo_f4")
-PORT = int(os.getenv("PORT", "8024"))
+PORT = int(os.getenv("PORT", "8025"))
 DB_ONLY_MODE = os.getenv("DB_ONLY_MODE", "0").strip() == "1"
 
 CORS_ORIGINS = [
@@ -88,7 +88,7 @@ def _mask_db_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
 # Telegram
 API_ID = int(get_env_required("TELEGRAM_API_ID"))
 API_HASH = get_env_required("TELEGRAM_API_HASH")
-BOT_USER = os.getenv("BOT_USER", "@RelayXGate_bot").strip()
+BOT_USER = os.getenv("BOT_USER", "@ZenkaiData1_bot").strip()
 BOT_COMMAND = os.getenv("BOT_COMMAND", "/dni").strip()
 SESSION_FILE = resolve_path_env("SESSION_FILE", BASE_DIR / "session_bot_ft")
 
@@ -99,6 +99,7 @@ MAX_TOTAL_WAIT = int(os.getenv("MAX_TOTAL_WAIT", "180"))
 ANTI_SPAM_MIN_WAIT_S = float(os.getenv("ANTI_SPAM_MIN_WAIT_S", "0"))
 ANTI_SPAM_RETRY_EPSILON_S = float(os.getenv("ANTI_SPAM_RETRY_EPSILON_S", "0.25"))
 SAME_DNI_BURST_WINDOW_S = float(os.getenv("SAME_DNI_BURST_WINDOW_S", "3"))
+CACHE_NOINFO_IN_DB = os.getenv("CACHE_NOINFO_IN_DB", "1").strip() == "1"
 
 # 🎯 FOTO TARGET
 TARGET_PHOTO_INDEX = int(os.getenv("TARGET_PHOTO_INDEX", "2"))
@@ -325,6 +326,8 @@ RE_BANNED_2 = re.compile(r"ACCESO\s+RESTRINGIDO.*banead", re.IGNORECASE | re.DOT
 BOT_INTERNAL_ERROR_PATTERNS = [
     "❌ Error Interno",
     "Ocurrió un fallo",
+    "Ocurrió un error al procesar la consulta",
+    "Ocurrio un error al procesar la consulta",
     "Creditos devueltos",
     "Créditos devueltos",
 ]
@@ -1996,11 +1999,17 @@ async def consulta(
     except BotKaisenNoInfoException:
         app.state.metrics.telegram_noinfo += 1
         cb.record_success()
-        rec: Dict[str, Any] = {"dni": dni, "foto": None, "data_raw": None}
-        await run_in_threadpool(db.upsert_record, rec)
+        if CACHE_NOINFO_IN_DB:
+            rec: Dict[str, Any] = {"dni": dni, "foto": None, "data_raw": None}
+            await run_in_threadpool(db.upsert_record, rec)
+            reason = "kaisen_noinfo_cached"
+        else:
+            # Para CYBER: no guardar en BD cuando el bot responde no-info.
+            logger.info("[%s] NOINFO sin persistencia en BD (CACHE_NOINFO_IN_DB=0)", req_id)
+            reason = "kaisen_noinfo_not_cached"
 
         resp = minimal_null_response(
-            dni, debug=debug, reason="kaisen_noinfo_cached"
+            dni, debug=debug, reason=reason
         )
         if debug:
             resp["ms"] = round((time.perf_counter() - t0) * 1000, 2)
