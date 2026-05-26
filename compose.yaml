@@ -4,19 +4,19 @@ services:
       context: .
       dockerfile: Dockerfile
     image: api_photo_f4
-    container_name: fenixbot
+    container_name: api_f_z_
     restart: unless-stopped
     init: true
     env_file:
       - .env
     environment:
-      PORT: ${PORT:-8025}
+      PORT: ${PORT:-2004}
       SESSION_FILE: /app/data/session_fenixbot
       STATE_FILE: /app/data/api_state.json
       PGCLIENTENCODING: ${PGCLIENTENCODING:-UTF8}
       DB_OPTIONS: ${DB_OPTIONS:-}
     ports:
-      - "${PORT:-8025}:${PORT:-8025}"
+      - "${PORT:-2004}:${PORT:-2004}"
     volumes:
       - ./data:/app/data
     read_only: true
